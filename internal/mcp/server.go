@@ -36,25 +36,26 @@ func New(svc *service.Service) *server.MCPServer {
 	s := server.NewMCPServer(
 		"bergo-lsp-mcp",
 		"0.1.0",
+		server.WithInstructions("Semantic code navigation for local source files via language servers (LSP). Use this server when you need symbol definitions, symbol references, or a file symbol outline. This server is not for plain text search or arbitrary file reading. It works best when filePath is an absolute path inside a local project and the matching language server is installed."),
 		server.WithToolCapabilities(false),
 		server.WithRecovery(),
 	)
 
 	definitionTool := gomcp.NewTool(
 		"find_definition",
-		gomcp.WithDescription("Find symbol definitions through a configured LSP server."),
+		gomcp.WithDescription("Use this to jump to the semantic definition of a symbol in source code through a configured LSP server. Best for 'where is this symbol defined?' queries."),
 		gomcp.WithInputSchema[definitionRequest](),
 		gomcp.WithOutputSchema[types.QueryResult](),
 	)
 	referencesTool := gomcp.NewTool(
 		"find_references",
-		gomcp.WithDescription("Find symbol references through a configured LSP server."),
+		gomcp.WithDescription("Use this to find semantic references/usages of a symbol across the workspace through a configured LSP server. Best for 'where is this symbol used?' queries."),
 		gomcp.WithInputSchema[referenceRequest](),
 		gomcp.WithOutputSchema[types.QueryResult](),
 	)
 	outlineTool := gomcp.NewTool(
 		"file_outline",
-		gomcp.WithDescription("List the symbols and structural outline of a file through a configured LSP server."),
+		gomcp.WithDescription("Use this to list the semantic symbols and structure of a file through a configured LSP server. Best for understanding a file's top-level and nested declarations without reading the whole file."),
 		gomcp.WithInputSchema[outlineRequest](),
 		gomcp.WithOutputSchema[types.OutlineResult](),
 	)
