@@ -1,0 +1,23 @@
+{
+  "rootMarkers": [".git", "go.mod", "package.json", "pyproject.toml", "Cargo.toml"],
+  "languages": [
+    {
+      "name": "go",
+      "extensions": [".go"],
+      "languageId": "go",
+      "command": "gopls",
+      "args": [],
+      "env": {},
+      "rootDirStrategy": "auto"
+    },
+    {
+      "name": "typescript",
+      "extensions": [".ts", ".tsx", ".js", ".jsx"],
+      "languageId": "typescript",
+      "command": "typescript-language-server",
+      "args": ["--stdio"],
+      "env": {},
+      "rootDirStrategy": "auto"
+    }
+  ]
+}

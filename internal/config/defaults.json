@@ -1,0 +1,113 @@
+{
+  "rootMarkers": [
+    ".git",
+    "go.mod",
+    "package.json",
+    "pyproject.toml",
+    "Cargo.toml",
+    "pom.xml",
+    "build.gradle",
+    "Makefile"
+  ],
+  "languages": [
+    {
+      "name": "go",
+      "extensions": [".go"],
+      "languageId": "go",
+      "command": "gopls",
+      "args": [],
+      "env": {},
+      "rootDirStrategy": "auto"
+    },
+    {
+      "name": "typescript",
+      "extensions": [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"],
+      "languageId": "typescript",
+      "command": "typescript-language-server",
+      "args": ["--stdio"],
+      "env": {},
+      "rootDirStrategy": "auto"
+    },
+    {
+      "name": "python",
+      "extensions": [".py"],
+      "languageId": "python",
+      "command": "pyright-langserver",
+      "args": ["--stdio"],
+      "env": {},
+      "rootDirStrategy": "auto"
+    },
+    {
+      "name": "rust",
+      "extensions": [".rs"],
+      "languageId": "rust",
+      "command": "rust-analyzer",
+      "args": [],
+      "env": {},
+      "rootDirStrategy": "auto"
+    },
+    {
+      "name": "lua",
+      "extensions": [".lua"],
+      "languageId": "lua",
+      "command": "lua-language-server",
+      "args": [],
+      "env": {},
+      "rootDirStrategy": "auto"
+    },
+    {
+      "name": "c_cpp",
+      "extensions": [".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx"],
+      "languageId": "cpp",
+      "command": "clangd",
+      "args": [],
+      "env": {},
+      "rootDirStrategy": "auto"
+    },
+    {
+      "name": "php",
+      "extensions": [".php"],
+      "languageId": "php",
+      "command": "intelephense",
+      "args": ["--stdio"],
+      "env": {},
+      "rootDirStrategy": "auto"
+    },
+    {
+      "name": "ruby",
+      "extensions": [".rb"],
+      "languageId": "ruby",
+      "command": "solargraph",
+      "args": ["stdio"],
+      "env": {},
+      "rootDirStrategy": "auto"
+    },
+    {
+      "name": "bash",
+      "extensions": [".sh", ".bash"],
+      "languageId": "shellscript",
+      "command": "bash-language-server",
+      "args": ["start"],
+      "env": {},
+      "rootDirStrategy": "auto"
+    },
+    {
+      "name": "yaml",
+      "extensions": [".yaml", ".yml"],
+      "languageId": "yaml",
+      "command": "yaml-language-server",
+      "args": ["--stdio"],
+      "env": {},
+      "rootDirStrategy": "auto"
+    },
+    {
+      "name": "json",
+      "extensions": [".json"],
+      "languageId": "json",
+      "command": "vscode-json-language-server",
+      "args": ["--stdio"],
+      "env": {},
+      "rootDirStrategy": "auto"
+    }
+  ]
+}
