@@ -100,7 +100,7 @@ go build -o bergo-lsp-mcp .
 
 ## 参数说明
 
-- `filePath`: 必填，目标文件路径
+- `filePath`: 必填，目标文件的绝对路径；不支持相对路径
 - `rootUri`: 可选，workspace 根目录。支持 `file://...` 和普通本地路径；不传时自动搜索
 - `line`: 对 `find_definition` / `find_references` 必填，1-based 行号
 - `symbolName`: 对 `find_definition` / `find_references` 必填
