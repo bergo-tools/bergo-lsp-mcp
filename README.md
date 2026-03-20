@@ -58,6 +58,18 @@ bergo-lsp-mcp
 }
 ```
 
+一般的AI编辑器，coding agent的全量的mcp配置json文件一般是这样的
+
+```json
+{
+  "mcpServers": {
+    "bergo-lsp": {
+      "command": "bergo-lsp-mcp"
+    }
+  }
+}
+```
+
 配置好后最好在你的Agent的Rules中添加一个说明来引导AI调用：
 
 
