@@ -13,7 +13,7 @@ import (
 
 type definitionRequest struct {
 	FilePath   string `json:"filePath" jsonschema:"required" jsonschema_description:"Absolute file path; relative paths are not supported"`
-	RootURI    string `json:"rootUri,omitempty" jsonschema_description:"Workspace root URI or path;"`
+	RootURI    string `json:"rootUri" jsonschema_description:"Workspace root URI or path;"`
 	Line       int    `json:"line" jsonschema:"required,minimum=1" jsonschema_description:"1-based line number"`
 	SymbolName string `json:"symbolName" jsonschema:"required" jsonschema_description:"Symbol name on the target line"`
 	Index      int    `json:"index,omitempty" jsonschema:"minimum=0" jsonschema_description:"Optional 1-based occurrence index of symbolName on the line; 0 means unspecified"`
@@ -21,7 +21,7 @@ type definitionRequest struct {
 
 type referenceRequest struct {
 	FilePath   string `json:"filePath" jsonschema:"required" jsonschema_description:"Absolute file path; relative paths are not supported"`
-	RootURI    string `json:"rootUri,omitempty" jsonschema_description:"Workspace root URI or path;"`
+	RootURI    string `json:"rootUri" jsonschema_description:"Workspace root URI or path;"`
 	Line       int    `json:"line" jsonschema:"required,minimum=1" jsonschema_description:"1-based line number"`
 	SymbolName string `json:"symbolName" jsonschema:"required" jsonschema_description:"Symbol name on the target line"`
 	Index      int    `json:"index,omitempty" jsonschema:"minimum=0" jsonschema_description:"Optional 1-based occurrence index of symbolName on the line; 0 means unspecified"`
@@ -29,12 +29,12 @@ type referenceRequest struct {
 
 type outlineRequest struct {
 	FilePath string `json:"filePath" jsonschema:"required" jsonschema_description:"Absolute file path; relative paths are not supported"`
-	RootURI  string `json:"rootUri,omitempty" jsonschema_description:"Workspace root URI or path root URI or path;"`
+	RootURI  string `json:"rootUri" jsonschema_description:"Workspace root URI or path root URI or path;"`
 }
 
 type implementationRequest struct {
 	FilePath   string `json:"filePath" jsonschema:"required" jsonschema_description:"Absolute file path; relative paths are not supported"`
-	RootURI    string `json:"rootUri,omitempty" jsonschema_description:"Workspace root URI or path;"`
+	RootURI    string `json:"rootUri" jsonschema_description:"Workspace root URI or path;"`
 	Line       int    `json:"line" jsonschema:"required,minimum=1" jsonschema_description:"1-based line number"`
 	SymbolName string `json:"symbolName" jsonschema:"required" jsonschema_description:"Symbol name on the target line"`
 	Index      int    `json:"index,omitempty" jsonschema:"minimum=0" jsonschema_description:"Optional 1-based occurrence index of symbolName on the line; 0 means unspecified"`
@@ -42,7 +42,7 @@ type implementationRequest struct {
 
 type renameRequest struct {
 	FilePath   string `json:"filePath" jsonschema:"required" jsonschema_description:"Absolute file path; relative paths are not supported"`
-	RootURI    string `json:"rootUri,omitempty" jsonschema_description:"Workspace root URI or path;"`
+	RootURI    string `json:"rootUri" jsonschema_description:"Workspace root URI or path;"`
 	Line       int    `json:"line" jsonschema:"required,minimum=1" jsonschema_description:"1-based line number"`
 	SymbolName string `json:"symbolName" jsonschema:"required" jsonschema_description:"Symbol name on the target line"`
 	Index      int    `json:"index,omitempty" jsonschema:"minimum=0" jsonschema_description:"Optional 1-based occurrence index of symbolName on the line; 0 means unspecified"`
