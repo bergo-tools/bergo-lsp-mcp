@@ -25,20 +25,7 @@ go install github.com/bergo-tools/bergo-lsp-mcp@latest
 bergo-lsp-mcp
 ```
 
-直接运行：
-
-```bash
-go run .
-```
-
-或者先构建：
-
-```bash
-go build -o bergo-lsp-mcp .
-./bergo-lsp-mcp
-```
-
-它是一个 `stdio` MCP server，通常应该由 MCP host 作为子进程拉起。
+它是一个 `stdio` MCP server，通常应该由 MCP host 作为子进程拉起，不需要手动运行。
 
 ## MCP Host 配置
 
@@ -75,7 +62,7 @@ go build -o bergo-lsp-mcp .
 
 
 ```
-如果bergo-lsp插件可用，在查找某个符号的定义,引用和实现时，批量改名某个符号，优先用这个插件提供的方法
+如果bergo-lsp插件可用，在查找某个符号的定义,引用和实现或批量改名某个符号，优先用这个插件提供的方法
 
 ```
 
