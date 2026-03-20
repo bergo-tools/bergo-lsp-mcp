@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"unicode/utf16"
 
 	"github.com/bergo-tools/bergo-lsp-mcp/internal/config"
 	"github.com/bergo-tools/bergo-lsp-mcp/internal/lsp"
@@ -34,6 +36,23 @@ type ReferenceQuery struct {
 	Line       int
 	SymbolName string
 	Index      int
+}
+
+type ImplementationQuery struct {
+	FilePath   string
+	RootURI    string
+	Line       int
+	SymbolName string
+	Index      int
+}
+
+type RenameQuery struct {
+	FilePath   string
+	RootURI    string
+	Line       int
+	SymbolName string
+	Index      int
+	NewName    string
 }
 
 type OutlineQuery struct {
@@ -107,6 +126,56 @@ func (s *Service) FindDefinition(ctx context.Context, query DefinitionQuery) (*t
 	return &types.QueryResult{Items: items, Warnings: warnings}, nil
 }
 
+func (s *Service) FindImplementation(ctx context.Context, query ImplementationQuery) (*types.QueryResult, error) {
+	client, lang, absPath, warnings, lineZero, columnZero, err := s.prepareQuery(ctx, query.FilePath, query.RootURI, query.Line, query.SymbolName, query.Index)
+	if err != nil {
+		return nil, err
+	}
+	if err := client.EnsureSynced(ctx, absPath, lang.LanguageID); err != nil {
+		return nil, err
+	}
+
+	result, err := client.Implementation(ctx, absPath, lineZero, columnZero)
+	if err != nil {
+		return nil, err
+	}
+
+	locations := append([]protocol.Location{}, result.Locations...)
+	for _, link := range result.Links {
+		locations = append(locations, protocol.Location{
+			URI:   link.TargetURI,
+			Range: link.TargetSelectionRange,
+		})
+	}
+	items, filterWarnings := filterLocationResults(query.SymbolName, locations)
+	warnings = append(warnings, filterWarnings...)
+	return &types.QueryResult{Items: items, Warnings: warnings}, nil
+}
+
+func (s *Service) Rename(ctx context.Context, query RenameQuery) (*types.RenameResult, error) {
+	if strings.TrimSpace(query.NewName) == "" {
+		return nil, errors.New("newName is required")
+	}
+
+	client, lang, absPath, warnings, lineZero, columnZero, err := s.prepareQuery(ctx, query.FilePath, query.RootURI, query.Line, query.SymbolName, query.Index)
+	if err != nil {
+		return nil, err
+	}
+	if err := client.EnsureSynced(ctx, absPath, lang.LanguageID); err != nil {
+		return nil, err
+	}
+
+	edit, err := client.Rename(ctx, absPath, lineZero, columnZero, query.NewName)
+	if err != nil {
+		return nil, err
+	}
+	items, err := applyWorkspaceEdit(edit)
+	if err != nil {
+		return nil, err
+	}
+	return &types.RenameResult{Items: items, Warnings: warnings}, nil
+}
+
 func (s *Service) FileOutline(ctx context.Context, query OutlineQuery) (*types.OutlineResult, error) {
 	absPath, err := filepath.Abs(query.FilePath)
 	if err != nil {
@@ -130,7 +199,7 @@ func (s *Service) FileOutline(ctx context.Context, query OutlineQuery) (*types.O
 	}
 
 	items := flattenSymbols(absPath, symbols)
-	return &types.OutlineResult{Items: items}, nil
+	return &types.OutlineResult{FilePath: absPath, Items: items}, nil
 }
 
 func (s *Service) prepareQuery(ctx context.Context, filePath string, rootURI string, line int, symbolName string, index int) (*lsp.Client, *config.LanguageLSP, string, []string, int, int, error) {
@@ -236,16 +305,18 @@ func formatColumns(matches []int) string {
 	return strings.Join(columns, ", ")
 }
 
-func filterLocationResults(symbolName string, locations []protocol.Location) ([]types.Position, []string) {
-	positions := make([]types.Position, 0, len(locations))
-	confirmed := make([]types.Position, 0, len(locations))
+func filterLocationResults(symbolName string, locations []protocol.Location) ([]string, []string) {
+	positions := make([]string, 0, len(locations))
+	confirmed := make([]string, 0, len(locations))
 	unconfirmedCount := 0
 
 	for _, location := range locations {
-		position := toPosition(location.URI, location.Range)
+		position := formatLocation(location.URI, location.Range)
 		positions = append(positions, position)
 
-		ok, known := lineContainsSymbol(position.FilePath, position.Line, symbolName)
+		filePath := lsp.URIToPath(location.URI)
+		line := int(location.Range.Start.Line) + 1
+		ok, known := lineContainsSymbol(filePath, line, symbolName)
 		if !known {
 			unconfirmedCount++
 			continue
@@ -288,52 +359,256 @@ func lineContainsSymbol(filePath string, line int, symbolName string) (bool, boo
 	return strings.Contains(lines[line-1], symbolName), true
 }
 
-func toPosition(uri protocol.URI, rng protocol.Range) types.Position {
-	return types.Position{
-		FilePath:  lsp.URIToPath(uri),
-		Line:      int(rng.Start.Line) + 1,
-		Column:    int(rng.Start.Character) + 1,
-		EndLine:   int(rng.End.Line) + 1,
-		EndColumn: int(rng.End.Character) + 1,
-	}
-}
-
-func flattenSymbols(filePath string, symbols []any) []types.OutlineItem {
-	var items []types.OutlineItem
+func flattenSymbols(filePath string, symbols []any) []string {
+	var items []string
 	for _, symbol := range symbols {
 		switch v := symbol.(type) {
 		case protocol.DocumentSymbol:
 			items = append(items, flattenDocumentSymbol(filePath, v, "")...)
 		case protocol.SymbolInformation:
-			items = append(items, types.OutlineItem{
-				Name:          v.Name,
-				Kind:          v.Kind.String(),
-				FilePath:      lsp.URIToPath(v.Location.URI),
-				Line:          int(v.Location.Range.Start.Line) + 1,
-				Column:        int(v.Location.Range.Start.Character) + 1,
-				EndLine:       int(v.Location.Range.End.Line) + 1,
-				EndColumn:     int(v.Location.Range.End.Character) + 1,
-				ContainerName: v.ContainerName,
-			})
+			items = append(items, formatOutlineItem(
+				v.Kind.String(),
+				v.Name,
+				"",
+				v.ContainerName,
+				int(v.Location.Range.Start.Line)+1,
+				int(v.Location.Range.End.Line)+1,
+			))
 		}
 	}
 	return items
 }
 
-func flattenDocumentSymbol(filePath string, symbol protocol.DocumentSymbol, container string) []types.OutlineItem {
-	items := []types.OutlineItem{{
-		Name:          symbol.Name,
-		Kind:          symbol.Kind.String(),
-		Detail:        symbol.Detail,
-		FilePath:      filePath,
-		Line:          int(symbol.SelectionRange.Start.Line) + 1,
-		Column:        int(symbol.SelectionRange.Start.Character) + 1,
-		EndLine:       int(symbol.SelectionRange.End.Line) + 1,
-		EndColumn:     int(symbol.SelectionRange.End.Character) + 1,
-		ContainerName: container,
-	}}
+func flattenDocumentSymbol(filePath string, symbol protocol.DocumentSymbol, container string) []string {
+	_ = filePath
+	items := []string{formatOutlineItem(
+		symbol.Kind.String(),
+		symbol.Name,
+		symbol.Detail,
+		container,
+		int(symbol.SelectionRange.Start.Line)+1,
+		int(symbol.SelectionRange.End.Line)+1,
+	)}
 	for _, child := range symbol.Children {
 		items = append(items, flattenDocumentSymbol(filePath, child, symbol.Name)...)
 	}
 	return items
+}
+
+type fileEdit struct {
+	start protocol.Position
+	end   protocol.Position
+	text  string
+}
+
+func applyWorkspaceEdit(edit *protocol.WorkspaceEdit) ([]string, error) {
+	if edit == nil {
+		return nil, nil
+	}
+
+	editsByFile := make(map[string][]fileEdit)
+	for uri, edits := range edit.Changes {
+		filePath := lsp.URIToPath(protocol.URI(uri))
+		for _, edit := range edits {
+			editsByFile[filePath] = append(editsByFile[filePath], fileEdit{
+				start: edit.Range.Start,
+				end:   edit.Range.End,
+				text:  edit.NewText,
+			})
+		}
+	}
+	for _, change := range edit.DocumentChanges {
+		filePath := lsp.URIToPath(protocol.URI(change.TextDocument.URI))
+		for _, edit := range change.Edits {
+			editsByFile[filePath] = append(editsByFile[filePath], fileEdit{
+				start: edit.Range.Start,
+				end:   edit.Range.End,
+				text:  edit.NewText,
+			})
+		}
+	}
+
+	var filePaths []string
+	for filePath := range editsByFile {
+		filePaths = append(filePaths, filePath)
+	}
+	sort.Strings(filePaths)
+
+	var items []string
+	for _, filePath := range filePaths {
+		fileItems, err := applyFileEdits(filePath, editsByFile[filePath])
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, fileItems...)
+	}
+	return items, nil
+}
+
+func formatLocation(uri protocol.URI, rng protocol.Range) string {
+	filePath := lsp.URIToPath(uri)
+	line := int(rng.Start.Line) + 1
+	return fmt.Sprintf("%s:%d: %s", filePath, line, lineText(filePath, line))
+}
+
+func formatOutlineItem(kind string, name string, detail string, container string, line int, endLine int) string {
+	label := name
+	if container != "" {
+		label = container + "." + name
+	}
+	signature := formatOutlineSignature(label, detail)
+	if signature == "" {
+		signature = label
+	}
+	if endLine <= line {
+		return fmt.Sprintf("%s %s [line %d]", strings.ToLower(kind), signature, line)
+	}
+	return fmt.Sprintf("%s %s [line %d-%d]", strings.ToLower(kind), signature, line, endLine)
+}
+
+func applyFileEdits(filePath string, edits []fileEdit) ([]string, error) {
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("read file %q: %w", filePath, err)
+	}
+
+	sort.Slice(edits, func(i, j int) bool {
+		if edits[i].start.Line != edits[j].start.Line {
+			return edits[i].start.Line > edits[j].start.Line
+		}
+		return edits[i].start.Character > edits[j].start.Character
+	})
+
+	changedLines := make(map[int]struct{})
+	content := string(data)
+	for _, edit := range edits {
+		start, err := positionToOffset(content, edit.start)
+		if err != nil {
+			return nil, fmt.Errorf("map rename start position for %q: %w", filePath, err)
+		}
+		end, err := positionToOffset(content, edit.end)
+		if err != nil {
+			return nil, fmt.Errorf("map rename end position for %q: %w", filePath, err)
+		}
+		if start > end || start < 0 || end > len(content) {
+			return nil, fmt.Errorf("invalid rename range for %q", filePath)
+		}
+		content = content[:start] + edit.text + content[end:]
+		for line := int(edit.start.Line) + 1; line <= int(edit.end.Line)+1; line++ {
+			changedLines[line] = struct{}{}
+		}
+		if len(edit.text) > 0 {
+			for _, line := range changedLineNumbers(edit.start, edit.text) {
+				changedLines[line] = struct{}{}
+			}
+		}
+	}
+
+	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
+		return nil, fmt.Errorf("write file %q: %w", filePath, err)
+	}
+
+	lines := strings.Split(content, "\n")
+	var lineNumbers []int
+	for line := range changedLines {
+		if line > 0 && line <= len(lines) {
+			lineNumbers = append(lineNumbers, line)
+		}
+	}
+	sort.Ints(lineNumbers)
+
+	items := make([]string, 0, len(lineNumbers))
+	for _, line := range lineNumbers {
+		items = append(items, fmt.Sprintf("%s:%d: %s", filePath, line, strings.TrimSpace(lines[line-1])))
+	}
+	return items, nil
+}
+
+func positionToOffset(content string, pos protocol.Position) (int, error) {
+	line := int(pos.Line)
+	character := int(pos.Character)
+	if line < 0 || character < 0 {
+		return 0, errors.New("negative position")
+	}
+
+	offset := 0
+	currentLine := 0
+	for currentLine < line {
+		if offset >= len(content) {
+			return 0, errors.New("line out of range")
+		}
+		idx := strings.IndexByte(content[offset:], '\n')
+		if idx < 0 {
+			return 0, errors.New("line out of range")
+		}
+		offset += idx + 1
+		currentLine++
+	}
+
+	lineContent := content[offset:]
+	if idx := strings.IndexByte(lineContent, '\n'); idx >= 0 {
+		lineContent = lineContent[:idx]
+	}
+
+	byteInLine, err := utf16ColumnToByteOffset(lineContent, character)
+	if err != nil {
+		return 0, err
+	}
+	return offset + byteInLine, nil
+}
+
+func utf16ColumnToByteOffset(line string, column int) (int, error) {
+	if column == 0 {
+		return 0, nil
+	}
+
+	byteOffset := 0
+	utf16Units := 0
+	for _, r := range line {
+		if utf16Units >= column {
+			return byteOffset, nil
+		}
+		units := len(utf16.Encode([]rune{r}))
+		if utf16Units+units > column {
+			return 0, errors.New("column splits a rune")
+		}
+		utf16Units += units
+		byteOffset += len(string(r))
+	}
+	if utf16Units == column {
+		return byteOffset, nil
+	}
+	return 0, errors.New("column out of range")
+}
+
+func changedLineNumbers(start protocol.Position, newText string) []int {
+	lines := strings.Count(newText, "\n")
+	out := make([]int, 0, lines+1)
+	for i := 0; i <= lines; i++ {
+		out = append(out, int(start.Line)+1+i)
+	}
+	return out
+}
+
+func formatOutlineSignature(label string, detail string) string {
+	detail = strings.TrimSpace(detail)
+	if detail == "" {
+		return label
+	}
+	if strings.HasPrefix(detail, "(") {
+		return label + detail
+	}
+	return label + " " + detail
+}
+
+func lineText(filePath string, line int) string {
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return ""
+	}
+	lines := strings.Split(string(data), "\n")
+	if line <= 0 || line > len(lines) {
+		return ""
+	}
+	return strings.TrimSpace(lines[line-1])
 }

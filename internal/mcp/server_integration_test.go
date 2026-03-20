@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -39,8 +40,18 @@ func TestServerStdioIntegrationWithMCPClient(t *testing.T) {
 
 func helper() {}
 
+type Greeter interface {
+	Hello()
+}
+
+type greeter struct{}
+
+func (greeter) Hello() {}
+
 func main() {
 	helper()
+	var g Greeter = greeter{}
+	g.Hello()
 }
 `)
 	writeFile(t, configPath, `{
@@ -90,13 +101,15 @@ func main() {
 	for _, tool := range toolsResult.Tools {
 		toolNames = append(toolNames, tool.Name)
 	}
-	for _, want := range []string{"find_definition", "find_references", "file_outline"} {
+	for _, want := range []string{"find_definition", "find_references", "find_implementation", "file_outline", "rename"} {
 		if !slices.Contains(toolNames, want) {
 			t.Fatalf("tool %q not exposed; got %v", want, toolNames)
 		}
 	}
 
 	rootURI := "file://" + filepath.ToSlash(workspaceDir)
+	helperCallLine := findLineContaining(t, filePath, "\thelper()", 1)
+	interfaceHelloLine := findLineContaining(t, filePath, "\tHello()", 1)
 
 	definitionResult, err := client.CallTool(ctx, gomcp.CallToolRequest{
 		Params: gomcp.CallToolParams{
@@ -104,7 +117,7 @@ func main() {
 			Arguments: map[string]any{
 				"filePath":   filePath,
 				"rootUri":    rootURI,
-				"line":       6,
+				"line":       helperCallLine,
 				"symbolName": "helper",
 			},
 		},
@@ -121,7 +134,7 @@ func main() {
 	if len(definition.Items) == 0 {
 		t.Fatal("find_definition returned no items")
 	}
-	if definition.Items[0].FilePath != filePath || definition.Items[0].Line != 3 {
+	if !strings.Contains(definition.Items[0], filePath+":3:") {
 		t.Fatalf("unexpected definition result: %+v", definition.Items[0])
 	}
 
@@ -131,7 +144,7 @@ func main() {
 			Arguments: map[string]any{
 				"filePath":   filePath,
 				"rootUri":    rootURI,
-				"line":       6,
+				"line":       helperCallLine,
 				"symbolName": "helper",
 			},
 		},
@@ -148,8 +161,32 @@ func main() {
 	if len(references.Items) == 0 {
 		t.Fatal("find_references returned no items")
 	}
-	if !hasLine(references.Items, 6) {
+	if !hasLine(references.Items, helperCallLine) {
 		t.Fatalf("find_references did not include call site; got %+v", references.Items)
+	}
+
+	implementationResult, err := client.CallTool(ctx, gomcp.CallToolRequest{
+		Params: gomcp.CallToolParams{
+			Name: "find_implementation",
+			Arguments: map[string]any{
+				"filePath":   filePath,
+				"rootUri":    rootURI,
+				"line":       interfaceHelloLine,
+				"symbolName": "Hello",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("call find_implementation: %v\nserver stderr:\n%s", err, stderrBuf.String())
+	}
+	if implementationResult.IsError {
+		t.Fatalf("find_implementation returned error result: %+v", implementationResult)
+	}
+
+	var implementation types.QueryResult
+	decodeStructuredContent(t, implementationResult.StructuredContent, &implementation)
+	if len(implementation.Items) == 0 {
+		t.Fatal("find_implementation returned no items")
 	}
 
 	outlineResult, err := client.CallTool(ctx, gomcp.CallToolRequest{
@@ -173,8 +210,43 @@ func main() {
 	if len(outline.Items) == 0 {
 		t.Fatal("file_outline returned no items")
 	}
+	if outline.FilePath != filePath {
+		t.Fatalf("unexpected outline filepath: %q", outline.FilePath)
+	}
 	if !hasOutlineName(outline.Items, "helper") || !hasOutlineName(outline.Items, "main") {
 		t.Fatalf("file_outline missing expected symbols; got %+v", outline.Items)
+	}
+
+	renameResult, err := client.CallTool(ctx, gomcp.CallToolRequest{
+		Params: gomcp.CallToolParams{
+			Name: "rename",
+			Arguments: map[string]any{
+				"filePath":   filePath,
+				"rootUri":    rootURI,
+				"line":       helperCallLine,
+				"symbolName": "helper",
+				"newName":    "renamed",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("call rename: %v\nserver stderr:\n%s", err, stderrBuf.String())
+	}
+	if renameResult.IsError {
+		t.Fatalf("rename returned error result: %+v", renameResult)
+	}
+
+	var rename types.RenameResult
+	decodeStructuredContent(t, renameResult.StructuredContent, &rename)
+	if len(rename.Items) == 0 {
+		t.Fatal("rename returned no edits")
+	}
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("read renamed file: %v", err)
+	}
+	if !strings.Contains(string(data), "renamed()") {
+		t.Fatalf("rename was not applied: %s", string(data))
 	}
 }
 
@@ -367,9 +439,10 @@ func writeGoConfig(t *testing.T, path string) {
 }`)
 }
 
-func hasLine(items []types.Position, line int) bool {
+func hasLine(items []string, line int) bool {
+	needle := fmt.Sprintf(":%d:", line)
 	for _, item := range items {
-		if item.Line == line {
+		if strings.Contains(item, needle) {
 			return true
 		}
 	}
@@ -402,9 +475,9 @@ func findLineContaining(t *testing.T, path string, needle string, occurrence int
 	return 0
 }
 
-func hasOutlineName(items []types.OutlineItem, name string) bool {
+func hasOutlineName(items []string, name string) bool {
 	for _, item := range items {
-		if item.Name == name {
+		if strings.Contains(item, name) {
 			return true
 		}
 	}

@@ -14,7 +14,7 @@ import (
 )
 
 func Run(ctx context.Context) int {
-	cfg, err := config.Load(configPath())
+	cfg, err := config.Load(resolveConfigPath())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "load config: %v\n", err)
 		return 1
@@ -40,7 +40,7 @@ func Run(ctx context.Context) int {
 	return 0
 }
 
-func configPath() string {
+func resolveConfigPath() string {
 	if path := os.Getenv("BERGO_LSP_MCP_CONFIG"); path != "" {
 		return path
 	}

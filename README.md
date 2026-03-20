@@ -63,7 +63,7 @@ go build -o bergo-lsp-mcp .
 
 ## 直接怎么用
 
-这个 MCP server 提供 3 个工具：
+这个 MCP server 提供 5 个工具：
 
 ### `find_definition`
 
@@ -98,52 +98,153 @@ go build -o bergo-lsp-mcp .
 }
 ```
 
+### `find_implementation`
+
+```json
+{
+  "filePath": "/abs/path/to/file.go",
+  "rootUri": "file:///abs/path/to/project",
+  "line": 12,
+  "symbolName": "helper",
+  "index": 0
+}
+```
+
+### `rename`
+
+```json
+{
+  "filePath": "/abs/path/to/file.go",
+  "rootUri": "file:///abs/path/to/project",
+  "line": 12,
+  "symbolName": "helper",
+  "index": 0,
+  "newName": "renamedHelper"
+}
+```
+
 ## 参数说明
 
 - `filePath`: 必填，目标文件的绝对路径；不支持相对路径
 - `rootUri`: 可选，workspace 根目录。支持 `file://...` 和普通本地路径；不传时自动搜索
 - `line`: 对 `find_definition` / `find_references` 必填，1-based 行号
-- `symbolName`: 对 `find_definition` / `find_references` 必填
+- `symbolName`: 对 `find_definition` / `find_references` / `find_implementation` / `rename` 必填
 - `index`: 可选，1-based，表示 `symbolName` 在这一行中是第几次出现；`0` 表示未指定
+- `newName`: 对 `rename` 必填，目标新名字；`rename` 会直接修改磁盘文件
 
 ## 返回结构
 
-`find_definition` / `find_references` 返回：
+`find_definition` / `find_references` / `find_implementation` 返回：
 
 ```json
 {
   "items": [
-    {
-      "filePath": "/abs/path/to/file.go",
-      "line": 3,
-      "column": 6,
-      "endLine": 3,
-      "endColumn": 12
-    }
+    "/abs/path/to/file.go:3: func helper() {}"
   ],
   "warnings": []
 }
 ```
 
+字段说明：
+
+- `items`: 文本数组。每一项格式为 `filepath:line: lineText`
+- `warnings`: 可选。服务端在做符号定位回退、结果过滤或结果校验不完全时附带的提示信息
+
 `file_outline` 返回：
 
 ```json
 {
+  "filePath": "/abs/path/to/file.go",
   "items": [
-    {
-      "name": "MyType",
-      "kind": "Class",
-      "detail": "",
-      "filePath": "/abs/path/to/file.go",
-      "line": 10,
-      "column": 6,
-      "endLine": 10,
-      "endColumn": 12,
-      "containerName": ""
-    }
-  ]
+    "class MyType [line 10-20]",
+    "method MyType.Hello() error [line 12-15]"
+  ],
+  "warnings": []
 }
 ```
+
+字段说明：
+
+- `filePath`: 当前 outline 对应的文件绝对路径，只返回一次
+- `items`: 文本数组。每一项是一个符号摘要，包含类型、名称/签名和行号范围
+- `warnings`: 预留字段，当前 `file_outline` 正常返回时通常为空或省略
+
+`rename` 返回：
+
+```json
+{
+  "items": [
+    "/abs/path/to/file.go:3: func renamedHelper() {}",
+    "/abs/path/to/file.go:6: renamedHelper()"
+  ],
+  "warnings": []
+}
+```
+
+字段说明：
+
+- `items`: 已修改结果数组。每一项是改名完成后受影响行的最新内容
+- `warnings`: 可选。当前主要继承符号定位阶段的 warning
+
+## 行为语义
+
+### `find_definition`
+
+- 使用 LSP 的 `textDocument/definition`
+- 返回 `items[]`，不是单个对象
+- 如果底层 LSP 返回多个 definition / `LocationLink`，会全部转换后返回，不会强行只保留一个
+- 如果 LSP 返回 0 个位置，则返回空 `items`
+- 服务会尝试用 `symbolName` 对 LSP 结果做二次校验；如果只能确认部分结果，会过滤掉不匹配项并在 `warnings` 里说明
+- 如果完全无法可靠校验，但 LSP 已返回位置，则会保留原始 LSP 结果，并在 `warnings` 里说明
+
+### `find_references`
+
+- 使用 LSP 的 `textDocument/references`
+- 当前请求参数里 `includeDeclaration=true`，所以结果通常包含声明 / 定义本身
+- 是否一定包含声明，最终仍取决于底层语言服务器的实现
+- 如果 LSP 返回 0 个位置，则返回空 `items`
+- 和 `find_definition` 一样，服务会尝试按 `symbolName` 过滤或校验结果，并通过 `warnings` 暴露过滤/回退信息
+
+### `find_implementation`
+
+- 使用 LSP 的 `textDocument/implementation`
+- 返回 `items[]`，不是单个对象
+- 如果底层 LSP 返回多个 implementation / `LocationLink`，会全部转换后返回
+- 如果 LSP 返回 0 个位置，则返回空 `items`
+- 和 `find_definition` 一样，服务会尝试按 `symbolName` 过滤或校验结果，并通过 `warnings` 暴露过滤/回退信息
+
+### `file_outline`
+
+- 使用 LSP 的 `textDocument/documentSymbol`
+- 返回扁平列表，不返回树形 JSON
+- 如果底层 LSP 返回 `DocumentSymbol` 树，服务会递归拍平，并用 `containerName` 记录直接父级名称
+- 如果底层 LSP 返回 `SymbolInformation`，则直接转成扁平项；此时层级信息取决于 LSP 是否提供 `containerName`
+- 层级粒度完全取决于底层 LSP 暴露的 document symbols，通常会包含顶层声明，也可能包含方法、字段、内部符号等
+- 如果 LSP 返回 0 个符号，则返回空 `items`
+
+### `rename`
+
+- 使用 LSP 的 `textDocument/rename`
+- 会直接把 LSP 返回的重命名编辑写入磁盘文件
+- 返回值里的 `items[]` 是改名完成后受影响行的最新内容
+- 如果底层 LSP 返回 0 个编辑，则返回空 `items`，且不会修改文件
+- `newName` 非法时，通常由底层 LSP 直接报错
+
+## 失败语义
+
+- 参数错误会直接报错，不返回空数组
+- 典型参数错误包括：
+  - `filePath` 不存在
+  - `line < 1`
+  - `symbolName` 为空
+  - `index < 0`
+  - `newName` 为空
+  - 同一行里 `symbolName` 出现多次但没有提供可用的 `index`
+  - `index` 超出该行匹配次数
+- `symbolName` 在指定行找不到时，不会立刻报错；服务会回退到该行第一个非空白列继续请求 LSP，并在 `warnings` 里说明
+- `rootUri` 不正确、语言识别失败、LSP 未安装、LSP 不支持对应 capability、LSP 请求失败时，tool 会直接返回错误
+- 如果 LSP 成功返回但结果为空，tool 会返回空 `items`，而不是把“未找到”提升为错误
+- 对于 “workspace root 不对” 或 “LSP 尚未索引完成” 这类情况，最终表现取决于底层 LSP：有些 LSP 会报错，有些会返回空结果。这个 server 不会把这两类情况再统一改写成固定语义
 
 ## `index` 规则
 

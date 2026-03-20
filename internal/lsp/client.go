@@ -234,6 +234,14 @@ func (c *Client) SupportsDefinition() bool {
 	return capabilityEnabled(c.caps.DefinitionProvider)
 }
 
+func (c *Client) SupportsImplementation() bool {
+	return capabilityEnabled(c.caps.ImplementationProvider)
+}
+
+func (c *Client) SupportsRename() bool {
+	return capabilityEnabled(c.caps.RenameProvider)
+}
+
 func (c *Client) SupportsDocumentSymbol() bool {
 	return capabilityEnabled(c.caps.DocumentSymbolProvider)
 }
@@ -276,6 +284,44 @@ func (c *Client) Definition(ctx context.Context, filePath string, lineZeroBased 
 		return nil, err
 	}
 	return decodeDefinitionResult(raw)
+}
+
+func (c *Client) Implementation(ctx context.Context, filePath string, lineZeroBased int, columnZeroBased int) (*DefinitionResult, error) {
+	if !c.SupportsImplementation() {
+		return nil, errors.New("LSP server does not support implementation")
+	}
+
+	params := &protocol.ImplementationParams{
+		TextDocumentPositionParams: protocol.TextDocumentPositionParams{
+			TextDocument: protocol.TextDocumentIdentifier{URI: protocol.URI(pathToURI(filePath))},
+			Position: protocol.Position{
+				Line:      uint32(lineZeroBased),
+				Character: uint32(columnZeroBased),
+			},
+		},
+	}
+
+	var raw json.RawMessage
+	if err := protocol.Call(ctx, c.conn, protocol.MethodTextDocumentImplementation, params, &raw); err != nil {
+		return nil, err
+	}
+	return decodeDefinitionResult(raw)
+}
+
+func (c *Client) Rename(ctx context.Context, filePath string, lineZeroBased int, columnZeroBased int, newName string) (*protocol.WorkspaceEdit, error) {
+	if !c.SupportsRename() {
+		return nil, errors.New("LSP server does not support rename")
+	}
+	return c.server.Rename(ctx, &protocol.RenameParams{
+		TextDocumentPositionParams: protocol.TextDocumentPositionParams{
+			TextDocument: protocol.TextDocumentIdentifier{URI: protocol.URI(pathToURI(filePath))},
+			Position: protocol.Position{
+				Line:      uint32(lineZeroBased),
+				Character: uint32(columnZeroBased),
+			},
+		},
+		NewName: newName,
+	})
 }
 
 func (c *Client) DocumentSymbols(ctx context.Context, filePath string) ([]any, error) {

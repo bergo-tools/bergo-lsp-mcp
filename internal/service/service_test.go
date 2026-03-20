@@ -40,8 +40,50 @@ func TestFlattenSymbols(t *testing.T) {
 	if len(items) != 2 {
 		t.Fatalf("unexpected item count: %d", len(items))
 	}
-	if items[1].ContainerName != "MyType" {
-		t.Fatalf("unexpected container name: %s", items[1].ContainerName)
+	if !strings.Contains(items[1], "MyType.Method") {
+		t.Fatalf("unexpected item: %s", items[1])
+	}
+}
+
+func TestApplyWorkspaceEdit(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	filePath := filepath.Join(tmpDir, "main.go")
+	if err := os.WriteFile(filePath, []byte("package main\nfunc helper() {}\n"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	edit := &protocol.WorkspaceEdit{
+		Changes: map[protocol.DocumentURI][]protocol.TextEdit{
+			protocol.DocumentURI("file://" + filepath.ToSlash(filePath)): {
+				{
+					Range: protocol.Range{
+						Start: protocol.Position{Line: 1, Character: 5},
+						End:   protocol.Position{Line: 1, Character: 11},
+					},
+					NewText: "renamed",
+				},
+			},
+		},
+	}
+
+	items, err := applyWorkspaceEdit(edit)
+	if err != nil {
+		t.Fatalf("apply workspace edit: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("unexpected item count: %d", len(items))
+	}
+	if !strings.Contains(items[0], filePath+":2: func renamed() {}") {
+		t.Fatalf("unexpected edit: %s", items[0])
+	}
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("read file: %v", err)
+	}
+	if !strings.Contains(string(data), "func renamed() {}") {
+		t.Fatalf("rename was not applied: %s", string(data))
 	}
 }
 
@@ -125,8 +167,18 @@ func TestIntegrationWithGopls(t *testing.T) {
 
 func helper() {}
 
+type Greeter interface {
+	Hello()
+}
+
+type greeter struct{}
+
+func (greeter) Hello() {}
+
 func main() {
 	helper()
+	var g Greeter = greeter{}
+	g.Hello()
 }
 `
 	filePath := filepath.Join(tmpDir, "main.go")
@@ -154,9 +206,12 @@ func main() {
 	}
 	t.Cleanup(func() { _ = svc.Close() })
 
+	helperCallLine := findLine(t, source, "\thelper()")
+	interfaceHelloLine := findLine(t, source, "\tHello()")
+
 	definition, err := svc.FindDefinition(context.Background(), DefinitionQuery{
 		FilePath:   filePath,
-		Line:       6,
+		Line:       helperCallLine,
 		SymbolName: "helper",
 	})
 	if err != nil {
@@ -166,9 +221,21 @@ func main() {
 		t.Fatal("expected definition results")
 	}
 
+	implementation, err := svc.FindImplementation(context.Background(), ImplementationQuery{
+		FilePath:   filePath,
+		Line:       interfaceHelloLine,
+		SymbolName: "Hello",
+	})
+	if err != nil {
+		t.Fatalf("find implementation: %v", err)
+	}
+	if len(implementation.Items) == 0 {
+		t.Fatal("expected implementation results")
+	}
+
 	references, err := svc.FindReferences(context.Background(), ReferenceQuery{
 		FilePath:   filePath,
-		Line:       6,
+		Line:       helperCallLine,
 		SymbolName: "helper",
 	})
 	if err != nil {
@@ -185,6 +252,26 @@ func main() {
 	if len(outline.Items) == 0 {
 		t.Fatal("expected outline results")
 	}
+
+	rename, err := svc.Rename(context.Background(), RenameQuery{
+		FilePath:   filePath,
+		Line:       helperCallLine,
+		SymbolName: "helper",
+		NewName:    "renamed",
+	})
+	if err != nil {
+		t.Fatalf("rename: %v", err)
+	}
+	if len(rename.Items) == 0 {
+		t.Fatal("expected rename edits")
+	}
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("read renamed file: %v", err)
+	}
+	if !strings.Contains(string(data), "renamed()") {
+		t.Fatalf("rename was not written to disk: %s", string(data))
+	}
 }
 
 func containsAll(s string, parts []string) bool {
@@ -194,4 +281,16 @@ func containsAll(s string, parts []string) bool {
 		}
 	}
 	return true
+}
+
+func findLine(t *testing.T, content string, needle string) int {
+	t.Helper()
+	lines := strings.Split(content, "\n")
+	for i, line := range lines {
+		if strings.Contains(line, needle) {
+			return i + 1
+		}
+	}
+	t.Fatalf("line containing %q not found", needle)
+	return 0
 }
